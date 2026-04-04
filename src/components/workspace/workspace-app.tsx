@@ -175,6 +175,7 @@ export function WorkspaceApp() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftStroke, setDraftStroke] = useState<DrawItem | null>(null);
   const [shapeDraft, setShapeDraft] = useState<ShapeDraft | null>(null);
+  const [inviteModal, setInviteModal] = useState<{ link: string; email: string; etherealPreview?: string } | null>(null);
   
   // AI Demo State
   const [isVoiceActive, setIsVoiceActive] = useState(false);
@@ -1142,7 +1143,12 @@ export function WorkspaceApp() {
       return;
     }
     setInviteEmail("");
-    showToast(data.message ?? "Invite sent! Check your server console for the email preview link.");
+    // Always show the invite link in a modal so the user can copy/share it
+    setInviteModal({
+      link: data.acceptUrl,
+      email: inviteEmail,
+      etherealPreview: data.etherealPreview ?? undefined,
+    });
   };
 
   const tools: { id: Tool; label: string; icon: React.ReactNode; hint: string }[] = [
@@ -1343,6 +1349,76 @@ export function WorkspaceApp() {
           e.target.value = "";
         }}
       />
+
+      {/* ── Invite Link Modal ── */}
+      {inviteModal && (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setInviteModal(null)}
+          onKeyDown={(e) => e.key === "Escape" && setInviteModal(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/20">
+                <UserPlus className="h-5 w-5 text-indigo-400" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-white">Invite Sent!</h3>
+                <p className="text-xs text-[var(--muted)]">To: {inviteModal.email}</p>
+              </div>
+            </div>
+
+            <p className="mb-3 text-sm text-[var(--muted)]">
+              Share this link with your teammate so they can join your board:
+            </p>
+
+            <div className="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 mb-4">
+              <span className="flex-1 truncate text-xs text-indigo-300 font-mono">{inviteModal.link}</span>
+              <button
+                type="button"
+                className="shrink-0 rounded-lg bg-indigo-600 hover:bg-indigo-500 px-3 py-1.5 text-xs font-semibold text-white transition-colors"
+                onClick={async () => {
+                  await navigator.clipboard.writeText(inviteModal.link);
+                  showToast("Invite link copied! ✅");
+                }}
+              >
+                Copy
+              </button>
+            </div>
+
+            {inviteModal.etherealPreview && (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 mb-4">
+                <p className="text-xs text-amber-300 font-semibold mb-1">📧 Dev mode: View email preview</p>
+                <p className="text-[11px] text-amber-200/70 mb-2">
+                  No SMTP configured. Click below to see the email that would be sent:
+                </p>
+                <a
+                  href={inviteModal.etherealPreview}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-block rounded-lg bg-amber-600 hover:bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white transition-colors"
+                >
+                  Open Email Preview ↗
+                </a>
+              </div>
+            )}
+
+            <button
+              type="button"
+              className="w-full rounded-xl bg-[var(--surface-2)] hover:bg-white/10 py-2.5 text-sm font-medium text-[var(--muted)] transition-colors"
+              onClick={() => setInviteModal(null)}
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
+
       {showHelp && (
         <div
           className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm"

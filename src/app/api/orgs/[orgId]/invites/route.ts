@@ -14,29 +14,11 @@ async function sendInviteEmail(
   to: string,
   inviterName: string,
   orgName: string,
-  token: string
-) {
-  const origin = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  token: string,
+  origin: string
+): Promise<{ sent: boolean; previewUrl?: string }> {
   const fullAcceptUrl = `${origin}/invite/${token}`;
   const fullDeclineUrl = `${origin}/invite/${token}/decline`;
-
-  let transporter: nodemailer.Transporter;
-  if (process.env.SMTP_HOST) {
-    transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: Number(process.env.SMTP_PORT ?? 587),
-      secure: process.env.SMTP_SECURE === "true",
-      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    });
-  } else {
-    const testAccount = await nodemailer.createTestAccount();
-    transporter = nodemailer.createTransport({
-      host: "smtp.ethereal.email",
-      port: 587,
-      secure: false,
-      auth: { user: testAccount.user, pass: testAccount.pass },
-    });
-  }
 
   const html = `
 <!DOCTYPE html>
@@ -53,34 +35,64 @@ async function sendInviteEmail(
         <strong style="color:#fff">${inviterName}</strong> has invited you to join
         <strong style="color:#a5b4fc">${orgName}</strong> on Board — a real-time collaborative whiteboard powered by AI.
       </p>
-      <div style="display:flex;gap:12px;justify-content:center;flex-wrap:wrap;">
+      <div style="text-align:center;">
         <a href="${fullAcceptUrl}"
-           style="display:inline-block;padding:14px 36px;background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;font-size:15px;font-weight:700;text-decoration:none;border-radius:10px;">
+           style="display:inline-block;padding:16px 40px;background:linear-gradient(135deg,#4f46e5,#7c3aed);color:#fff;font-size:16px;font-weight:700;text-decoration:none;border-radius:12px;margin-bottom:12px;">
           ✅ Accept Invite
         </a>
+        <br/>
         <a href="${fullDeclineUrl}"
-           style="display:inline-block;padding:14px 36px;background:#374151;color:#9ca3af;font-size:15px;font-weight:600;text-decoration:none;border-radius:10px;">
-          ❌ Decline
+           style="display:inline-block;padding:10px 28px;background:#1f2937;color:#9ca3af;font-size:14px;font-weight:500;text-decoration:none;border-radius:8px;margin-top:8px;">
+          No thanks
         </a>
       </div>
       <p style="margin:28px 0 0;color:#64748b;font-size:12px;text-align:center;">
-        This invite link expires in 7 days. If you didn't expect this, you can safely ignore it.
+        Or copy this link: <a href="${fullAcceptUrl}" style="color:#818cf8">${fullAcceptUrl}</a>
       </p>
     </div>
   </div>
 </body>
 </html>`;
 
+  const subject = `${inviterName} invited you to join ${orgName} on Board`;
+
+  // ── Real SMTP (configured via env) ──────────────────────────────────────
+  if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT ?? 587),
+      secure: process.env.SMTP_SECURE === "true",
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    });
+    await transporter.sendMail({
+      from: process.env.SMTP_FROM ?? `"Board" <${process.env.SMTP_USER}>`,
+      to,
+      subject,
+      html,
+    });
+    console.log(`[Board] ✅ Invite email sent to ${to}`);
+    return { sent: true };
+  }
+
+  // ── Ethereal sandbox fallback (dev) ─────────────────────────────────────
+  const testAccount = await nodemailer.createTestAccount();
+  const transporter = nodemailer.createTransport({
+    host: "smtp.ethereal.email",
+    port: 587,
+    secure: false,
+    auth: { user: testAccount.user, pass: testAccount.pass },
+  });
   const info = await transporter.sendMail({
     from: `"Board" <noreply@board.app>`,
     to,
-    subject: `${inviterName} invited you to join ${orgName} on Board`,
+    subject,
     html,
   });
-
-  const previewUrl = nodemailer.getTestMessageUrl(info);
-  if (previewUrl) console.log(`\n📧 [Board] Invite email preview: ${previewUrl}\n`);
-  return previewUrl;
+  const previewUrl = nodemailer.getTestMessageUrl(info) || undefined;
+  if (previewUrl) {
+    console.log(`\n📧 [Board] Invite email preview (Ethereal sandbox):\n   ${previewUrl}\n`);
+  }
+  return { sent: !!previewUrl, previewUrl };
 }
 
 export async function GET(_: Request, { params }: { params: Promise<{ orgId: string }> }) {
@@ -120,17 +132,37 @@ export async function POST(request: Request, { params }: { params: Promise<{ org
     },
   });
 
-  let emailPreview: string | false = false;
+  // Determine the public origin for building links
+  const origin =
+    process.env.NEXTAUTH_URL ||
+    request.headers.get("origin") ||
+    "http://localhost:3000";
+
+  const acceptUrl = `${origin}/invite/${token}`;
+
+  let emailResult: { sent: boolean; previewUrl?: string } = { sent: false };
   try {
-    emailPreview = await sendInviteEmail(parsed.data.email, user.name, org?.name ?? "your org", token);
+    emailResult = await sendInviteEmail(
+      parsed.data.email,
+      user.name,
+      org?.name ?? "your org",
+      token,
+      origin
+    );
   } catch (e) {
     console.error("[Board] Email send failed:", e);
   }
 
+  const usingRealSmtp = !!(process.env.SMTP_HOST && process.env.SMTP_USER);
+
   return NextResponse.json({
     invite,
-    acceptUrl: `/invite/${token}`,
-    emailPreview: emailPreview || null,
-    message: emailPreview ? "Invite email sent! Check server console for the preview link." : "Invite created — email delivery failed, copy link manually.",
+    acceptUrl,
+    emailSent: emailResult.sent,
+    etherealPreview: emailResult.previewUrl ?? null,
+    usingRealSmtp,
+    message: usingRealSmtp
+      ? `Invite email sent to ${parsed.data.email}! ✅`
+      : "Invite created (no SMTP configured — share the link below)",
   });
 }
