@@ -301,11 +301,27 @@ export function WorkspaceApp() {
   };
 
   const handleSemanticGrouping = async () => {
-    const notes = board.objects.filter(o => o.type === "sticky" || o.type === "text").map(o => ({ id: o.id, text: o.text || "" }));
-    if (notes.length === 0) return;
+    // Use boardRef.current to always get fresh objects
+    const currentObjects = boardRef.current.objects;
+    const notes = currentObjects
+      .filter(o => o.type === "sticky" || o.type === "text")
+      .map(o => ({ id: o.id, text: o.text || "" }))
+      .filter(n => n.text.trim().length > 0);
+
+    if (notes.length === 0) {
+      showToast("Add some sticky notes first!");
+      return;
+    }
+    if (notes.length < 3) {
+      showToast("Add at least 3 notes to organize.");
+      return;
+    }
     
     const themes = await runAiAction("organize", { notes });
-    if (!themes || !Array.isArray(themes)) return;
+    if (!themes || !Array.isArray(themes)) {
+      showToast("AI couldn't organize notes — try again.");
+      return;
+    }
     
     setBoard(b => {
       const newObjs = [...b.objects];
@@ -458,9 +474,32 @@ export function WorkspaceApp() {
         return next;
       });
     };
+
+    recognition.onerror = (event: any) => {
+      console.warn("[Voice] SpeechRecognition error:", event.error);
+      if (event.error === "not-allowed") {
+        showToast("Microphone access denied — allow it in browser settings.");
+        setIsVoiceActive(false);
+      } else if (event.error === "network") {
+        showToast("Voice recognition needs internet connection.");
+      } else if (event.error === "no-speech") {
+        // No-speech is non-fatal, recognition will continue
+      } else {
+        showToast(`Voice error: ${event.error}`);
+        setIsVoiceActive(false);
+      }
+    };
+
+    recognition.onend = () => {
+      // If still supposed to be active, auto-restart (browser stops after silence)
+      if (isVoiceActive) {
+        try { recognition.start(); } catch {}
+      }
+    };
     
     recognition.start();
-    return () => recognition.stop();
+    showToast("🎙️ Listening… Say \"BoardBot\" to give a command.");
+    return () => { try { recognition.stop(); } catch {} };
   }, [isVoiceActive, persist]);
   // === END AI FEATURES ===
 

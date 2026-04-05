@@ -129,28 +129,21 @@ export async function POST(request: Request, { params }: { params: Promise<{ org
     !!process.env.SMTP_USER &&
     !!process.env.SMTP_PASS;
 
-  let emailSent = false;
-  let emailError: string | null = null;
-
+  // ── Fire email in background — never block the response ──────────────
   if (hasSmtp) {
-    try {
-      await sendRealEmail(parsed.data.email, user.name, org?.name ?? "your org", acceptUrl);
-      emailSent = true;
-    } catch (e: any) {
-      console.error("[Board] Email send failed:", e?.message);
-      emailError = e?.message ?? "Unknown error";
-    }
+    // Do NOT await — send email asynchronously so user gets link instantly
+    sendRealEmail(parsed.data.email, user.name, org?.name ?? "your org", acceptUrl)
+      .then(() => console.log(`[Board] ✅ Invite email sent to ${parsed.data.email}`))
+      .catch((e: any) => console.error(`[Board] ❌ Email failed for ${parsed.data.email}:`, e?.message));
   }
 
+  // Return the invite link immediately — UI shows modal right away
   return NextResponse.json({
     invite,
     acceptUrl,
-    emailSent,
-    emailError,
-    message: emailSent
-      ? `✅ Invite email sent to ${parsed.data.email}!`
-      : hasSmtp
-      ? `⚠️ Email failed (${emailError}). Share the link below manually.`
-      : "📋 No email provider configured — share this link with your teammate:",
+    emailSent: hasSmtp,
+    message: hasSmtp
+      ? `📨 Invite link created — email is being sent to ${parsed.data.email}`
+      : "📋 Share this invite link with your teammate:",
   });
 }
