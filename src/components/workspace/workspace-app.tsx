@@ -214,7 +214,7 @@ export function WorkspaceApp() {
         
         const stateToSave: BoardState = { objects: next.objects, pages: currentDeck, activePageId: activePageIdRef.current };
 
-        const res = await fetch(`/api/boards/${boardId}`, {
+      const res = await fetch(`/api/boards/${boardId}`, {
           method: "PUT",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ stateJson: JSON.stringify(stateToSave), title: boardTitle }),
@@ -222,6 +222,8 @@ export function WorkspaceApp() {
         if (!res.ok) return;
         const data = (await res.json()) as { board: { updatedAt: string } };
         lastServerTimeRef.current = new Date(data.board.updatedAt).getTime();
+        // Update the ref so the next poll doesn't re-apply our own save
+        boardJsonRef.current = JSON.stringify(stateToSave);
         setLastSyncText(`Saved ${new Date().toLocaleTimeString()}`);
         channelRef.current?.postMessage({ boardId, payload: stateToSave });
       } finally {
@@ -1829,7 +1831,8 @@ export function WorkspaceApp() {
                               );
                               deckPagesRef.current = updated;
                               setDeckPages([...updated]);
-                              void persist({ objects: board.objects });
+                              // Pass the full deck state so background is included in the broadcast
+                              void persist({ objects: boardRef.current.objects, pages: updated, activePageId: activePageIdRef.current });
                             }}
                           />
                         );
