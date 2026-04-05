@@ -175,7 +175,8 @@ export function WorkspaceApp() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftStroke, setDraftStroke] = useState<DrawItem | null>(null);
   const [shapeDraft, setShapeDraft] = useState<ShapeDraft | null>(null);
-  const [inviteModal, setInviteModal] = useState<{ link: string; email: string; etherealPreview?: string } | null>(null);
+  const [inviteModal, setInviteModal] = useState<{ link: string; email: string; message: string } | null>(null);
+  const [inviteLoading, setInviteLoading] = useState(false);
   
   // AI Demo State
   const [isVoiceActive, setIsVoiceActive] = useState(false);
@@ -1132,23 +1133,30 @@ export function WorkspaceApp() {
       showToast("Organization and email required");
       return;
     }
-    const res = await fetch(`/api/orgs/${orgId}/invites`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email: inviteEmail, role: "member" }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      showToast(typeof data.error === "string" ? data.error : "Invite failed");
-      return;
+    setInviteLoading(true);
+    try {
+      const res = await fetch(`/api/orgs/${orgId}/invites`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: inviteEmail, role: "member" }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        showToast(typeof data.error === "string" ? data.error : "Invite failed");
+        return;
+      }
+      const savedEmail = inviteEmail;
+      setInviteEmail("");
+      setInviteModal({
+        link: data.acceptUrl,
+        email: savedEmail,
+        message: data.message ?? "Share this link with your teammate:",
+      });
+    } catch (err) {
+      showToast("Network error — please try again.");
+    } finally {
+      setInviteLoading(false);
     }
-    setInviteEmail("");
-    // Always show the invite link in a modal so the user can copy/share it
-    setInviteModal({
-      link: data.acceptUrl,
-      email: inviteEmail,
-      etherealPreview: data.etherealPreview ?? undefined,
-    });
   };
 
   const tools: { id: Tool; label: string; icon: React.ReactNode; hint: string }[] = [
@@ -1374,7 +1382,7 @@ export function WorkspaceApp() {
             </div>
 
             <p className="mb-3 text-sm text-[var(--muted)]">
-              Share this link with your teammate so they can join your board:
+              {inviteModal.message}
             </p>
 
             <div className="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 mb-4">
@@ -1391,22 +1399,6 @@ export function WorkspaceApp() {
               </button>
             </div>
 
-            {inviteModal.etherealPreview && (
-              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 mb-4">
-                <p className="text-xs text-amber-300 font-semibold mb-1">📧 Dev mode: View email preview</p>
-                <p className="text-[11px] text-amber-200/70 mb-2">
-                  No SMTP configured. Click below to see the email that would be sent:
-                </p>
-                <a
-                  href={inviteModal.etherealPreview}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-block rounded-lg bg-amber-600 hover:bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white transition-colors"
-                >
-                  Open Email Preview ↗
-                </a>
-              </div>
-            )}
 
             <button
               type="button"
@@ -1516,9 +1508,26 @@ export function WorkspaceApp() {
           <section>
             <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-[var(--muted)]">Invite</p>
             <div className="flex gap-2">
-              <Input className="flex-1" placeholder="teammate@email.com" value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} />
-              <Button type="button" variant="secondary" className="shrink-0 px-3" title="Create invite link" onClick={() => void sendInvite()}>
-                <UserPlus className="h-4 w-4" />
+              <Input 
+                className="flex-1" 
+                placeholder="teammate@email.com" 
+                value={inviteEmail} 
+                onChange={(e) => setInviteEmail(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && void sendInvite()}
+                disabled={inviteLoading}
+              />
+              <Button 
+                type="button" 
+                variant="secondary" 
+                className="shrink-0 px-3" 
+                title="Send invite" 
+                onClick={() => void sendInvite()}
+                disabled={inviteLoading || !inviteEmail.trim()}
+              >
+                {inviteLoading 
+                  ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white inline-block" />
+                  : <UserPlus className="h-4 w-4" />
+                }
               </Button>
             </div>
             <p className="mt-1.5 text-[11px] leading-snug text-[var(--muted)]">Invitees accept at <span className="text-indigo-300">/invite/:token</span> while signed in.</p>
