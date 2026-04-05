@@ -175,7 +175,13 @@ export function WorkspaceApp() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftStroke, setDraftStroke] = useState<DrawItem | null>(null);
   const [shapeDraft, setShapeDraft] = useState<ShapeDraft | null>(null);
-  const [inviteModal, setInviteModal] = useState<{ link: string; email: string; message: string } | null>(null);
+  const [inviteModal, setInviteModal] = useState<{
+    link: string;
+    email: string;
+    message: string;
+    emailSent: boolean;
+    emailError?: string;
+  } | null>(null);
   const [inviteLoading, setInviteLoading] = useState(false);
   
   // AI Demo State
@@ -1192,6 +1198,8 @@ export function WorkspaceApp() {
         link: data.acceptUrl,
         email: savedEmail,
         message: data.message ?? "Share this link with your teammate:",
+        emailSent: !!data.emailSent,
+        emailError: data.emailError ?? undefined,
       });
     } catch (err) {
       showToast("Network error — please try again.");
@@ -1409,23 +1417,43 @@ export function WorkspaceApp() {
           onKeyDown={(e) => e.key === "Escape" && setInviteModal(null)}
         >
           <div
-            className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-2xl"
+            className="w-full max-w-lg rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
+            {/* Header */}
             <div className="flex items-center gap-3 mb-4">
-              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/20">
-                <UserPlus className="h-5 w-5 text-indigo-400" />
+              <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${inviteModal.emailSent ? "bg-emerald-500/20" : "bg-amber-500/20"}`}>
+                <UserPlus className={`h-5 w-5 ${inviteModal.emailSent ? "text-emerald-400" : "text-amber-400"}`} />
               </div>
               <div>
-                <h3 className="font-semibold text-white">Invite Sent!</h3>
+                <h3 className="font-semibold text-white">
+                  {inviteModal.emailSent ? "✅ Email sent!" : "📋 Invite link ready"}
+                </h3>
                 <p className="text-xs text-[var(--muted)]">To: {inviteModal.email}</p>
               </div>
             </div>
 
-            <p className="mb-3 text-sm text-[var(--muted)]">
-              {inviteModal.message}
-            </p>
+            {/* Email error + Resend setup guide */}
+            {inviteModal.emailError && (
+              <div className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3 space-y-2">
+                <p className="text-xs font-semibold text-red-300">⚠️ Email delivery failed</p>
+                <p className="text-[11px] text-red-200/70 font-mono break-all">{inviteModal.emailError}</p>
+                <div className="border-t border-red-500/20 pt-2">
+                  <p className="text-[11px] text-amber-200 font-semibold mb-1">Fix: Add Resend API Key (free, 2 min)</p>
+                  <ol className="text-[11px] text-amber-100/70 space-y-0.5 list-decimal pl-4">
+                    <li>Go to <span className="text-indigo-300">resend.com</span> → Sign up free</li>
+                    <li>Click <strong>API Keys</strong> → Create Key → Copy it</li>
+                    <li>In Railway → Variables → Add: <span className="font-mono text-indigo-300">RESEND_API_KEY</span> = your key</li>
+                    <li>Redeploy → Done ✅</li>
+                  </ol>
+                </div>
+              </div>
+            )}
 
+            {/* Invite link */}
+            <p className="mb-2 text-sm text-[var(--muted)]">
+              {inviteModal.emailSent ? "Email sent! You can also share this link directly:" : "Share this link with your teammate:"}
+            </p>
             <div className="flex items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 mb-4">
               <span className="flex-1 truncate text-xs text-indigo-300 font-mono">{inviteModal.link}</span>
               <button
@@ -1439,7 +1467,6 @@ export function WorkspaceApp() {
                 Copy
               </button>
             </div>
-
 
             <button
               type="button"

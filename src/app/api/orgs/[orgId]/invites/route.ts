@@ -9,7 +9,6 @@ const schema = z.object({
   role: z.enum(["member", "admin"]).default("member"),
 });
 
-/** Detect the true public origin (Railway/Vercel/localhost) */
 function getOrigin(request: Request): string {
   if (process.env.NEXTAUTH_URL && !process.env.NEXTAUTH_URL.includes("localhost")) {
     return process.env.NEXTAUTH_URL.replace(/\/$/, "");
@@ -35,7 +34,7 @@ function buildEmailHtml(inviterName: string, orgName: string, acceptUrl: string)
     <div style="padding:36px;">
       <p style="margin:0 0 24px;color:#cbd5e1;font-size:15px;line-height:1.6;">
         <strong style="color:#fff">${inviterName}</strong> has invited you to join
-        <strong style="color:#a5b4fc">${orgName}</strong> on Board — a real-time collaborative whiteboard powered by AI.
+        <strong style="color:#a5b4fc">${orgName}</strong> on Board — a real-time collaborative whiteboard.
       </p>
       <div style="text-align:center;margin-bottom:24px;">
         <a href="${acceptUrl}"
@@ -44,8 +43,7 @@ function buildEmailHtml(inviterName: string, orgName: string, acceptUrl: string)
         </a>
       </div>
       <p style="color:#64748b;font-size:12px;text-align:center;word-break:break-all;">
-        Can't click the button? Copy this link:<br/>
-        <a href="${acceptUrl}" style="color:#818cf8">${acceptUrl}</a>
+        Or copy this link: <a href="${acceptUrl}" style="color:#818cf8">${acceptUrl}</a>
       </p>
     </div>
   </div>
@@ -53,59 +51,68 @@ function buildEmailHtml(inviterName: string, orgName: string, acceptUrl: string)
 </html>`;
 }
 
-async function sendEmail(to: string, subject: string, html: string): Promise<void> {
+/** Returns null on success, error message string on failure */
+async function trySendEmail(to: string, subject: string, html: string): Promise<string | null> {
+  // ── 1. Resend API (BEST - works everywhere, free 100/day) ─────────────
   const resendKey = process.env.RESEND_API_KEY;
-
   if (resendKey) {
-    // ── Resend (recommended — free 100/day, no SMTP needed) ──────────────
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${resendKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from: process.env.RESEND_FROM ?? "Board App <onboarding@resend.dev>",
-        to,
-        subject,
-        html,
-      }),
-    });
-    if (!res.ok) {
-      const err = await res.text();
-      throw new Error(`Resend API error: ${err}`);
+    try {
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${resendKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: process.env.RESEND_FROM ?? "Board App <onboarding@resend.dev>",
+          to,
+          subject,
+          html,
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        return `Resend error (${res.status}): ${body}`;
+      }
+      console.log(`[Board] ✅ Resend email sent to ${to}`);
+      return null; // success
+    } catch (e: any) {
+      return `Resend exception: ${e.message}`;
     }
-    console.log(`[Board] ✅ Email sent via Resend to ${to}`);
-    return;
   }
 
-  // ── Nodemailer SMTP fallback ──────────────────────────────────────────
+  // ── 2. SMTP fallback ──────────────────────────────────────────────────
   const smtpHost = process.env.SMTP_HOST;
   const smtpUser = process.env.SMTP_USER;
   const smtpPass = process.env.SMTP_PASS;
 
   if (smtpHost && smtpUser && smtpPass) {
-    const nodemailer = (await import("nodemailer")).default;
-    const transporter = nodemailer.createTransport({
-      host: smtpHost,
-      port: Number(process.env.SMTP_PORT ?? 587),
-      secure: process.env.SMTP_SECURE === "true",
-      auth: { user: smtpUser, pass: smtpPass.replace(/\s/g, "") }, // strip spaces from app password
-      connectionTimeout: 8000,
-      greetingTimeout: 8000,
-      socketTimeout: 8000,
-    });
-    await transporter.sendMail({
-      from: process.env.SMTP_FROM ?? `"Board" <${smtpUser}>`,
-      to,
-      subject,
-      html,
-    });
-    console.log(`[Board] ✅ Email sent via SMTP to ${to}`);
-    return;
+    try {
+      const nodemailer = (await import("nodemailer")).default;
+      const transporter = nodemailer.createTransport({
+        host: smtpHost,
+        port: Number(process.env.SMTP_PORT ?? 587),
+        secure: process.env.SMTP_SECURE === "true",
+        auth: { user: smtpUser, pass: smtpPass.replace(/\s/g, "") },
+        connectionTimeout: 8000,
+        greetingTimeout: 8000,
+        socketTimeout: 8000,
+      });
+      await transporter.sendMail({
+        from: process.env.SMTP_FROM ?? `"Board" <${smtpUser}>`,
+        to,
+        subject,
+        html,
+      });
+      console.log(`[Board] ✅ SMTP email sent to ${to}`);
+      return null; // success
+    } catch (e: any) {
+      return `SMTP error: ${e.message}`;
+    }
   }
 
-  throw new Error("No email provider configured. Add RESEND_API_KEY or SMTP_HOST+SMTP_USER+SMTP_PASS.");
+  return "No email provider configured. Add RESEND_API_KEY to Railway Variables.";
 }
 
 export async function GET(_: Request, { params }: { params: Promise<{ orgId: string }> }) {
@@ -151,20 +158,26 @@ export async function POST(request: Request, { params }: { params: Promise<{ org
   const subject = `${user.name} invited you to join ${org?.name ?? "a workspace"} on Board`;
   const html = buildEmailHtml(user.name, org?.name ?? "your org", acceptUrl);
 
-  const hasProvider = !!(process.env.RESEND_API_KEY || (process.env.SMTP_HOST && process.env.SMTP_USER));
+  // Send email and surface the result (with 12s max wait)
+  const emailError = await Promise.race([
+    trySendEmail(parsed.data.email, subject, html),
+    new Promise<string>((resolve) =>
+      setTimeout(() => resolve("Email timed out after 12s — check Railway logs"), 12000)
+    ),
+  ]);
 
-  // Fire email in background — never block the response
-  if (hasProvider) {
-    sendEmail(parsed.data.email, subject, html)
-      .catch((e: any) => console.error(`[Board] ❌ Email failed:`, e?.message));
-  }
+  console.log(emailError
+    ? `[Board] ❌ Email to ${parsed.data.email}: ${emailError}`
+    : `[Board] ✅ Email delivered to ${parsed.data.email}`
+  );
 
   return NextResponse.json({
     invite,
     acceptUrl,
-    emailSent: hasProvider,
-    message: hasProvider
-      ? `📨 Invite created — email sending to ${parsed.data.email}`
-      : "📋 Share this invite link directly with your teammate:",
+    emailSent: !emailError,
+    emailError: emailError ?? null,
+    message: !emailError
+      ? `✅ Invite email sent to ${parsed.data.email}!`
+      : `📋 Email failed (${emailError}) — copy this link and share it manually:`,
   });
 }
